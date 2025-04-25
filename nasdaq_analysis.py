@@ -11,6 +11,12 @@ def get_nasdaq_100_tickers():
     response = requests.get("https://api.nasdaq.com/api/quote/list-type/nasdaq100", headers=headers)
     return response.json()['data']['data']['rows']
 
+def parse_percent_change(p):
+    try:
+        return float(p.replace('%', '').replace('+', '').strip())
+    except:
+        return 0.0
+
 def get_analyst_ratings(ticker):
     stock = yf.Ticker(ticker)
     recommendations = stock.recommendations
