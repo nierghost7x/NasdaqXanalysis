@@ -218,24 +218,35 @@ for ticker in tickers_sorted[:25]:
             filtered_df = filter_data_by_period(stock_data, months_back)
             if filtered_df is not None and not filtered_df.empty:
                 close_prices = filtered_df['Close'].squeeze()
+                dates = filtered_df.index
                 
-                # Plot with enhanced styling
-                ax.plot(close_prices, color=colors[label], linewidth=2.5, alpha=0.9)
+                # Plot with proper date x-axis
+                ax.plot(dates, close_prices, color=colors[label], linewidth=2.5, alpha=0.9)
                 
                 # Add fill under the curve for better visual appeal
-                ax.fill_between(range(len(close_prices)), close_prices, alpha=0.2, color=colors[label])
+                ax.fill_between(dates, close_prices, alpha=0.2, color=colors[label])
                 
                 # Enhanced grid
                 ax.grid(axis="y", alpha=0.3, linestyle='--', linewidth=0.5, color='gray')
                 ax.grid(axis="x", alpha=0.2, linestyle='--', linewidth=0.5, color='gray')
                 
+                # Format x-axis dates properly
+                if len(dates) > 0:
+                    # Limit number of ticks to avoid overcrowding
+                    max_ticks = 6
+                    tick_indices = np.linspace(0, len(dates)-1, min(max_ticks, len(dates)), dtype=int)
+                    tick_dates = [dates[i] for i in tick_indices]
+                    tick_labels = [date.strftime('%b %Y') if months_back >= 12 else date.strftime('%b %d') for date in tick_dates]
+                    
+                    ax.set_xticks(tick_dates)
+                    ax.set_xticklabels(tick_labels, rotation=45, ha='right')
+                
                 # Style the axes
                 ax.set_xlabel(label, fontsize=11, fontweight='bold', color='white')
-                ax.tick_params(axis='x', rotation=45, colors='lightgray', labelsize=9)
+                ax.tick_params(axis='x', colors='lightgray', labelsize=8)
                 ax.tick_params(axis='y', rotation=0, colors='lightgray', labelsize=9)
                 
                 # Add price range info
-                price_min, price_max = close_prices.min(), close_prices.max()
                 price_change = ((close_prices.iloc[-1] - close_prices.iloc[0]) / close_prices.iloc[0]) * 100
                 
                 # Color code the price change
@@ -243,6 +254,9 @@ for ticker in tickers_sorted[:25]:
                 ax.text(0.02, 0.95, f'{price_change:+.1f}%', transform=ax.transAxes, 
                        fontsize=10, fontweight='bold', color=change_color,
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
+                
+                # Format y-axis to show currency
+                ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:.0f}'))
                 
                 # Spine styling
                 for spine in ax.spines.values():
@@ -294,7 +308,7 @@ for ticker in tickers_sorted[:25]:
 
     # Adjust layout for better spacing
     plt.tight_layout()
-    plt.subplots_adjust(top=0.85, hspace=0.3)
+    plt.subplots_adjust(top=0.88, bottom=0.15, left=0.05, right=0.98, wspace=0.25)
     
     st.pyplot(fig)
     plt.close(fig)
