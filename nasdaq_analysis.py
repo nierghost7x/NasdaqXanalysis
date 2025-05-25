@@ -255,8 +255,13 @@ for ticker in tickers_sorted[:25]:
                        fontsize=10, fontweight='bold', color=change_color,
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
                 
-                # Format y-axis to show currency
+                # Format y-axis to show currency and set proper limits
                 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:.0f}'))
+                
+                # Set y-axis limits to actual price range with small padding
+                price_min, price_max = close_prices.min(), close_prices.max()
+                padding = (price_max - price_min) * 0.05  # 5% padding
+                ax.set_ylim(price_min - padding, price_max + padding)
                 
                 # Spine styling
                 for spine in ax.spines.values():
