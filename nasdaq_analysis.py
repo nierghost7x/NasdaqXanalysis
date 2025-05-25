@@ -198,20 +198,18 @@ for ticker in tickers_sorted[:25]:
     
     # Define timeframes in months
     timeframes = {
-        "8 Years": 96,  # 8 * 12 months
-        "1 Year": 12,   # 12 months
-        "6 Months": 6   # 6 months
+        "5 Years": 60,    # 5 * 12 months
+        "3 Months": 3     # 3 months
     }
 
     # Enhanced color scheme with gradients
     colors = {
-        "8 Years": "#00FF88",    # Bright green
-        "1 Year": "#FF9500",     # Bright orange  
-        "6 Months": "#9D4EDD"    # Purple
+        "5 Years": "#00FF88",    # Bright green
+        "3 Months": "#9D4EDD"    # Purple
     }
 
     # Plot charts using filtered data from the same dataset
-    for i, (ax, (label, months_back)) in enumerate(zip(axes[:3], timeframes.items())):
+    for i, (ax, (label, months_back)) in enumerate(zip(axes[:2], timeframes.items())):  # Changed to 2 charts
         ax.set_facecolor('#1E1E1E')  # Dark chart background
         
         if stock_data is not None and not stock_data.empty:
@@ -255,13 +253,8 @@ for ticker in tickers_sorted[:25]:
                        fontsize=10, fontweight='bold', color=change_color,
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
                 
-                # Format y-axis to show currency and set proper limits
+                # Format y-axis to show currency
                 ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:.0f}'))
-                
-                # Set y-axis limits to actual price range with small padding
-                price_min, price_max = close_prices.min(), close_prices.max()
-                padding = (price_max - price_min) * 0.05  # 5% padding
-                ax.set_ylim(price_min - padding, price_max + padding)
                 
                 # Spine styling
                 for spine in ax.spines.values():
@@ -277,10 +270,10 @@ for ticker in tickers_sorted[:25]:
                    transform=ax.transAxes, color='gray', fontsize=12, fontweight='bold')
             ax.set_facecolor('#2E2E2E')
 
-    # Enhanced Analyst ratings panel
+    # Move analyst ratings to the third position
     summary = get_analyst_ratings(symbol)
-    axes[3].axis("off")
-    axes[3].set_facecolor('#1E1E1E')
+    axes[2].axis("off")  # Changed index to 2
+    axes[2].set_facecolor('#1E1E1E')
     
     if summary:
         # Create a more visually appealing ratings display
