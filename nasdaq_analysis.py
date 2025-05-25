@@ -198,13 +198,15 @@ for ticker in tickers_sorted[:25]:
     
     # Define timeframes in months
     timeframes = {
-        "5 Years": 60,    # 5 * 12 months
-        "3 Months": 3     # 3 months
+        "5 Years": 5*12,  # 5 * 12 months
+        "1 Year": 12,   # 12 months
+        "3 Months": 3   # 6 months
     }
 
     # Enhanced color scheme with gradients
     colors = {
         "5 Years": "#00FF88",    # Bright green
+        "1 Year": "#FF9500",     # Bright orange  
         "3 Months": "#9D4EDD"    # Purple
     }
 
