@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import pytz
+import pandas as pd
 
 # --- Helper Functions ---
 def get_nasdaq_100_tickers():
@@ -33,31 +34,59 @@ def get_analyst_ratings(ticker):
     score = (latest['strongBuy'] * 1 + latest['buy'] * 2 + latest['hold'] * 3 + latest['sell'] * 4 + latest['strongSell'] * 5) / total
     return {'Buy': round(percentages['Buy'], 1), 'Hold': round(percentages['Hold'], 1), 'Sell': round(percentages['Sell'], 1), 'Score': round(score, 2)}
 
-def get_momentum_score(symbol):
+def fetch_stock_data(symbol, period_years=8):
+    """Fetch stock data once for the longest period needed"""
     try:
-        df = yf.download(symbol, period="1y", interval="1d", progress=False)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=365 * period_years)
+        df = yf.download(symbol, start=start_date.strftime("%Y-%m-%d"), 
+                        end=end_date.strftime("%Y-%m-%d"), progress=False)
         df.dropna(inplace=True)
-        if len(df) < 200:
+        return df
+    except:
+        return None
+
+def filter_data_by_period(df, months_back):
+    """Filter dataframe to get data from specific months back"""
+    if df is None or df.empty:
+        return None
+    
+    end_date = df.index[-1]
+    start_date = end_date - timedelta(days=30 * months_back)
+    
+    # Find the closest date in the dataframe
+    filtered_df = df[df.index >= start_date]
+    return filtered_df if not filtered_df.empty else df
+
+def get_momentum_score_from_data(df):
+    """Calculate momentum score using pre-fetched data"""
+    try:
+        if df is None or len(df) < 200:
             return 0.0
+        
         df_close = df['Close'].squeeze()
-        p_1y = df_close.iloc[0]
-        p_6m = df_close.iloc[int(len(df) * 0.5)]
-        p_1m = df_close.iloc[int(len(df) * 11 / 12)]
+        
+        # Get data points for different periods
+        p_1y = df_close.iloc[0] if len(df_close) > 252 else df_close.iloc[0]
+        p_6m = df_close.iloc[max(0, len(df) - 126)] if len(df_close) > 126 else df_close.iloc[0]
+        p_1m = df_close.iloc[max(0, len(df) - 21)] if len(df_close) > 21 else df_close.iloc[0]
         p_now = df_close.iloc[-1]
+        
         change_1y = ((p_now - p_1y) / p_1y) * 100
         change_6m = ((p_now - p_6m) / p_6m) * 100
         change_1m = ((p_now - p_1m) / p_1m) * 100
+        
         score = 1.5 * (change_1m - change_6m) + (change_1m - change_1y)
         return round(score, 2)
     except:
         return 0.0
 
-def short_term_regression_momentum(symbol, window=20):
+def short_term_regression_momentum_from_data(df, window=20):
+    """Calculate regression momentum using pre-fetched data"""
     try:
-        df = yf.download(symbol, period="2mo", interval="1d", progress=False)
-        df.dropna(inplace=True)
-        if len(df) < window:
+        if df is None or len(df) < window:
             return 0.0
+        
         y = df['Close'].squeeze().values[-window:]
         x = np.arange(len(y))
         slope, intercept = np.polyfit(x, y, 1)
@@ -65,10 +94,12 @@ def short_term_regression_momentum(symbol, window=20):
     except:
         return 0.0
 
-def price_acceleration(symbol, window=10):
+def price_acceleration_from_data(df, window=10):
+    """Calculate price acceleration using pre-fetched data"""
     try:
-        df = yf.download(symbol, period="1mo", interval="1d", progress=False)
-        df.dropna(inplace=True)
+        if df is None or len(df) < window:
+            return 0.0
+        
         close = df['Close'].squeeze().values[-window:]
         returns = np.diff(close)
         acc = np.mean(np.diff(returns))  # second derivative
@@ -76,20 +107,26 @@ def price_acceleration(symbol, window=10):
     except:
         return 0.0
 
-def volume_weighted_momentum(symbol):
+def volume_weighted_momentum_from_data(df):
+    """Calculate volume weighted momentum using pre-fetched data"""
     try:
-        df = yf.download(symbol, period="1mo", interval="1d", progress=False)
-        df.dropna(inplace=True)
-        df['return'] = df['Close'].pct_change()
-        df['vw_return'] = df['return'] * df['Volume']
-        return round(df['vw_return'].sum(), 4)
+        if df is None or df.empty:
+            return 0.0
+        
+        # Use last month of data
+        df_last_month = df.tail(21)  # Approximately 1 month
+        df_calc = df_last_month.copy()
+        df_calc['return'] = df_calc['Close'].pct_change()
+        df_calc['vw_return'] = df_calc['return'] * df_calc['Volume']
+        return round(df_calc['vw_return'].sum(), 4)
     except:
         return 0.0
 
-def short_term_composite_momentum(symbol):
-    reg = short_term_regression_momentum(symbol)
-    accel = price_acceleration(symbol)
-    vwm = volume_weighted_momentum(symbol)
+def short_term_composite_momentum_from_data(df):
+    """Calculate composite momentum using pre-fetched data"""
+    reg = short_term_regression_momentum_from_data(df)
+    accel = price_acceleration_from_data(df)
+    vwm = volume_weighted_momentum_from_data(df)
     return round((reg * 0.5) + (accel * 100 * 0.3) + (vwm * 0.2), 2)
 
 # --- Streamlit UI ---
@@ -100,69 +137,165 @@ sort_by = st.selectbox("Sort By", ["Drop Percentage", "Analyst Rating", "Momentu
 
 # Display data
 tickers = get_nasdaq_100_tickers()
-for ticker in tickers:
-    ticker['symbol'] = ticker['symbol'].replace('.', '-')
-    summary = get_analyst_ratings(ticker['symbol'])
-    if summary:
-        ticker['Buy'] = summary['Buy']
-    else:
-        ticker['Buy'] = -1  # Use -1 so that tickers with no data go last
+
+# Pre-process tickers and add momentum scores if needed
+with st.spinner("Loading stock data and calculating metrics..."):
+    for ticker in tickers:
+        ticker['symbol'] = ticker['symbol'].replace('.', '-')
+        
+        # Get analyst ratings
+        summary = get_analyst_ratings(ticker['symbol'])
+        if summary:
+            ticker['Buy'] = summary['Buy']
+        else:
+            ticker['Buy'] = -1  # Use -1 so that tickers with no data go last
+        
+        # Fetch stock data once if momentum calculation is needed
+        if sort_by in ["Momentum Score", "Composite Momentum"]:
+            stock_data = fetch_stock_data(ticker['symbol'])
+            
+            if sort_by == "Momentum Score":
+                ticker['momentum_score'] = get_momentum_score_from_data(stock_data)
+            elif sort_by == "Composite Momentum":
+                ticker['momentum_score'] = short_term_composite_momentum_from_data(stock_data)
+            
+            # Store the data for later use in charts
+            ticker['stock_data'] = stock_data
 
 # Sorting Configuration
 if sort_by == "Drop Percentage":
     tickers_sorted = sorted(tickers, key=lambda x: parse_percent_change(x.get('percentageChange', '0%')))
 elif sort_by == "Analyst Rating":
     tickers_sorted = sorted(tickers, key=lambda x: x['Buy'], reverse=True)
-elif sort_by == "Momentum Score":
-    for ticker in tickers:
-        ticker['momentum_score'] = get_momentum_score(ticker['symbol'])
-    tickers_sorted = sorted(tickers, key=lambda x: x['momentum_score'], reverse=True)
-elif sort_by == "Composite Momentum":
-    for ticker in tickers:
-        ticker['momentum_score'] = short_term_composite_momentum(ticker['symbol'])
+elif sort_by in ["Momentum Score", "Composite Momentum"]:
     tickers_sorted = sorted(tickers, key=lambda x: x['momentum_score'], reverse=True)
 
 # Display Top 25 Stocks
 for ticker in tickers_sorted[:25]:
-    fig, axes = plt.subplots(1, 4, figsize=(15, 3))
+    # Set up the figure with dark style and better spacing
+    plt.style.use('dark_background')
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4))
+    fig.patch.set_facecolor('#0E1117')  # Streamlit dark background
+    
     score = ticker.get('momentum_score', '')
     change_str = ticker.get('percentageChange', 'N/A')
-    fig.suptitle(f"{ticker['companyName']} ({change_str})  | Score: {score}", fontsize=16)
+    
+    # Enhanced title with better formatting
+    title_color = '#32CD32' if parse_percent_change(change_str) >= 0 else '#FF6B6B'
+    fig.suptitle(f"{ticker['companyName']} ({ticker['symbol']}) | {change_str} | Score: {score}", 
+                fontsize=14, fontweight='bold', color='white', y=0.95)
+    
     symbol = ticker['symbol']
+
+    # Fetch data once for this ticker if not already fetched
+    if 'stock_data' not in ticker:
+        stock_data = fetch_stock_data(symbol)
+    else:
+        stock_data = ticker['stock_data']
 
     local_timezone = pytz.timezone('Europe/Berlin')
     now = datetime.now(local_timezone)
+    
+    # Define timeframes in months
     timeframes = {
-        "8 Years": (now - timedelta(days=365*8)).strftime("%Y-%m-%d"),
-        "1 Year": (now - timedelta(days=365)).strftime("%Y-%m-%d"),
-        "6 Months": (now - timedelta(days=30*6)).strftime("%Y-%m-%d")
+        "8 Years": 96,  # 8 * 12 months
+        "1 Year": 12,   # 12 months
+        "6 Months": 6   # 6 months
     }
 
+    # Enhanced color scheme with gradients
     colors = {
-        "8 Years": "green",
-        "1 Year": "orange",
-        "6 Months": "purple"
+        "8 Years": "#00FF88",    # Bright green
+        "1 Year": "#FF9500",     # Bright orange  
+        "6 Months": "#9D4EDD"    # Purple
     }
 
-    for ax, (label, start_date) in zip(axes[:3], timeframes.items()):
-        df = yf.download(symbol, start=start_date, end=datetime.now().strftime("%Y-%m-%d"), progress=False)
-        df.dropna(inplace=True)
-        ax.plot(df['Close'].squeeze(), color=colors[label])
-        ax.grid(axis="y")
-        ax.set_xlabel(label)
-        ax.tick_params(axis='x', rotation=45)
-        ax.tick_params(axis='y', rotation=45)
+    # Plot charts using filtered data from the same dataset
+    for i, (ax, (label, months_back)) in enumerate(zip(axes[:3], timeframes.items())):
+        ax.set_facecolor('#1E1E1E')  # Dark chart background
+        
+        if stock_data is not None and not stock_data.empty:
+            filtered_df = filter_data_by_period(stock_data, months_back)
+            if filtered_df is not None and not filtered_df.empty:
+                close_prices = filtered_df['Close'].squeeze()
+                
+                # Plot with enhanced styling
+                ax.plot(close_prices, color=colors[label], linewidth=2.5, alpha=0.9)
+                
+                # Add fill under the curve for better visual appeal
+                ax.fill_between(range(len(close_prices)), close_prices, alpha=0.2, color=colors[label])
+                
+                # Enhanced grid
+                ax.grid(axis="y", alpha=0.3, linestyle='--', linewidth=0.5, color='gray')
+                ax.grid(axis="x", alpha=0.2, linestyle='--', linewidth=0.5, color='gray')
+                
+                # Style the axes
+                ax.set_xlabel(label, fontsize=11, fontweight='bold', color='white')
+                ax.tick_params(axis='x', rotation=45, colors='lightgray', labelsize=9)
+                ax.tick_params(axis='y', rotation=0, colors='lightgray', labelsize=9)
+                
+                # Add price range info
+                price_min, price_max = close_prices.min(), close_prices.max()
+                price_change = ((close_prices.iloc[-1] - close_prices.iloc[0]) / close_prices.iloc[0]) * 100
+                
+                # Color code the price change
+                change_color = '#32CD32' if price_change >= 0 else '#FF6B6B'
+                ax.text(0.02, 0.95, f'{price_change:+.1f}%', transform=ax.transAxes, 
+                       fontsize=10, fontweight='bold', color=change_color,
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
+                
+                # Spine styling
+                for spine in ax.spines.values():
+                    spine.set_color('gray')
+                    spine.set_alpha(0.5)
+                    
+            else:
+                ax.text(0.5, 0.5, 'No Data\nAvailable', ha='center', va='center', 
+                       transform=ax.transAxes, color='gray', fontsize=12, fontweight='bold')
+                ax.set_facecolor('#2E2E2E')
+        else:
+            ax.text(0.5, 0.5, 'No Data\nAvailable', ha='center', va='center', 
+                   transform=ax.transAxes, color='gray', fontsize=12, fontweight='bold')
+            ax.set_facecolor('#2E2E2E')
 
+    # Enhanced Analyst ratings panel
     summary = get_analyst_ratings(symbol)
     axes[3].axis("off")
+    axes[3].set_facecolor('#1E1E1E')
+    
     if summary:
-        axes[3].text(0.05, 0.9, "Analyst Ratings", fontsize=11, fontweight='bold')
-        axes[3].text(0.05, 0.7, f"Buy: {summary['Buy']}%", color="green", fontweight='bold')
-        axes[3].text(0.05, 0.6, f"Hold: {summary['Hold']}%", color="orange", fontweight='bold')
-        axes[3].text(0.05, 0.5, f"Sell: {summary['Sell']}%", color="red", fontweight='bold')
-        axes[3].text(0.05, 0.3, f"Score: {summary['Score']}", fontsize=10)
+        # Create a more visually appealing ratings display
+        axes[3].text(0.1, 0.85, "📊 Analyst Ratings", fontsize=12, fontweight='bold', color='white')
+        
+        # Rating bars visualization
+        ratings = [('Buy', summary['Buy'], '#32CD32'), 
+                  ('Hold', summary['Hold'], '#FFD700'), 
+                  ('Sell', summary['Sell'], '#FF6B6B')]
+        
+        for i, (rating, pct, color) in enumerate(ratings):
+            y_pos = 0.65 - i * 0.15
+            # Rating label
+            axes[3].text(0.1, y_pos, f"{rating}:", fontsize=10, color='white', fontweight='bold')
+            # Percentage
+            axes[3].text(0.3, y_pos, f"{pct}%", fontsize=10, color=color, fontweight='bold')
+            # Visual bar
+            bar_width = pct / 100 * 0.4  # Scale to fit
+            axes[3].add_patch(plt.Rectangle((0.45, y_pos-0.02), bar_width, 0.04, 
+                                          facecolor=color, alpha=0.7, edgecolor=color))
+        
+        # Overall score with styling
+        score_color = '#32CD32' if summary['Score'] <= 2.5 else '#FFD700' if summary['Score'] <= 3.5 else '#FF6B6B'
+        axes[3].text(0.1, 0.15, f"Overall Score: {summary['Score']}/5", 
+                    fontsize=11, fontweight='bold', color=score_color,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
     else:
-        axes[3].text(0.2, 0.5, "No Analyst Data", fontsize=11, color="gray")
+        axes[3].text(0.5, 0.5, "📊\nNo Analyst\nData Available", ha='center', va='center', 
+                    fontsize=11, color='gray', fontweight='bold')
 
+    # Adjust layout for better spacing
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.85, hspace=0.3)
+    
     st.pyplot(fig)
     plt.close(fig)
+    plt.style.use('default')  # Reset style for next iteration
